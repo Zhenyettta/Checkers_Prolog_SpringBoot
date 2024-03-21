@@ -10,8 +10,7 @@ import lombok.NoArgsConstructor;
 public class CellState {
     private int row;
     private int col;
-    private String state; // "black", "white", "empty"
-
-
+    private String state;
+    private String type;
 }
 

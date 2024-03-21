@@ -1,10 +1,242 @@
 <!DOCTYPE html>
-<html lang="en">
+<html xmlns:th="http://www.thymeleaf.org">
 <head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
+    <meta charset="UTF-8">
+    <title>Гра в шашки</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
 </head>
 <body>
-$END$
+
+<div class="game-container">
+    <div class="player-info top-player">
+        <span class="player-name">player291988</span>
+        <div class="timer">03:00</div>
+    </div>
+
+    <div class="checkerboard" id="checkerboard"></div>
+
+    <div class="player-info bottom-player">
+        <span class="player-name">player678100 (You)</span>
+        <div class="timer">03:00</div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        fetchInitialBoardState();
+    });
+
+    function fetchInitialBoardState() {
+        // Fetch initial board state from the server
+        fetch('/api/get-initial-board-state')
+            .then(response => response.json())
+            .then(initialState => {
+                createBoard(initialState);
+            })
+            .catch(error => {
+                console.error('Error fetching initial board state:', error);
+            });
+    }
+
+    function createBoard(initialState) {
+        const checkerboard = document.getElementById('checkerboard');
+        checkerboard.innerHTML = ''; // Clear the board before creating
+
+        // Generate the board cells
+        for (let row = 0; row < 8; row++) {
+            for (let col = 0; col < 8; col++) {
+                const cell = document.createElement('div');
+                cell.addEventListener('click', handleCheckerClick);
+                cell.className = 'cell';
+                cell.dataset.row = row;
+                cell.dataset.col = col;
+                cell.classList.add((row + col) % 2 === 0 ? 'white-cell' : 'black-cell');
+                checkerboard.appendChild(cell);
+            }
+        }
+
+        initialState.forEach(piece => {
+            const {row, col, state, type} = piece;
+            const cellSelector = `.cell[data-row="${row}"][data-col="${col}"]`;
+            const cell = checkerboard.querySelector(cellSelector);
+
+            if (cell && cell.classList.contains('black-cell')) {
+                const checker = document.createElement('div');
+                checker.className = `checker ${state}`;
+                checker.dataset.row = row;
+                checker.dataset.col = col;
+                if (state === 'white') {
+                    checker.addEventListener('click', handleCheckerClick);
+                }
+                if (type === 'king') {
+                    checker.classList.add('king');
+                } else {
+                    checker.classList.add('normal')
+                }
+                cell.appendChild(checker);
+            }
+        });
+    }
+
+    function handleCheckerClick(event) {
+        if (event.target.classList.contains('checker')) {
+            document.querySelectorAll('.checker.selected').forEach(checker => checker.classList.remove('selected'));
+            const checker = event.target;
+            const row = parseInt(checker.dataset.row);
+            const col = parseInt(checker.dataset.col);
+            const state = checker.classList.contains('white') ? 'white' : 'black';
+            const type = checker.classList.contains('normal') ? 'normal' : 'king';
+            const checkerPosition = {row: row, col: col, state: state, type: type};
+            const boardState = getCurrentBoardState();
+
+
+            fetch('api/move-options', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({checkerPosition: checkerPosition, boardState: boardState})
+            })
+                .then(response => response.json())
+                .then(data => {
+                    checker.classList.add('selected');
+                    displayMoveOptions(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        } else if (event.target.classList.contains('available-move')) {
+            const targetCell = event.target;
+            const sourceCell = document.querySelector('.checker.selected'); // We'll add a 'selected' class to the selected checker
+
+            if (sourceCell) {
+                moveChecker(sourceCell, targetCell);
+                clearMoveOptions();
+            }
+        }
+    }
+
+    function moveChecker(source, target) {
+        // Збільшуємо z-index для шашки, що переміщується
+        source.style.zIndex = 100;
+
+        const sourceRect = source.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+
+        // Розраховуємо середину клітинок за координатами X та Y
+        const sourceCenterX = sourceRect.left + sourceRect.width / 2;
+        const sourceCenterY = sourceRect.top + sourceRect.height / 2;
+        const targetCenterX = targetRect.left + targetRect.width / 2;
+        const targetCenterY = targetRect.top + targetRect.height / 2;
+
+        // Вираховуємо необхідне зміщення для анімації
+        const deltaX = targetCenterX - sourceCenterX;
+        const deltaY = targetCenterY - sourceCenterY;
+
+        // Застосовуємо CSS transform для переміщення шашки
+        source.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+        source.style.transition = 'transform 0.5s ease';
+
+        // Після завершення анімації
+        setTimeout(() => {
+            // Скидаємо властивості transform і transition
+            source.style.transform = '';
+            source.style.transition = '';
+
+            // Переміщуємо шашку в DOM
+            const checker = source.cloneNode(true);
+            checker.classList.remove('selected');
+
+            // Відновлюємо z-index
+            source.style.zIndex = '';
+            checker.style.zIndex = '';
+
+            // Переміщуємо шашку на нову клітинку
+            const newRow = parseInt(target.dataset.row);
+            const newCol = parseInt(target.dataset.col);
+            checker.dataset.row = newRow;
+            checker.dataset.col = newCol;
+
+            target.appendChild(checker);
+            source.remove();
+
+            // Оновлення стану дошки
+            const updatedBoardState = getCurrentBoardState();
+            updatePrologBoardState(updatedBoardState);
+        }, 500); // Час анімації
+    }
+
+
+
+
+    function updatePrologBoardState(boardState) {
+        fetch('api/update-board-state', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({boardState: boardState})
+        })
+            .then(response => {
+                if (!response.ok) {
+                    // If the server response is not OK, attempt to parse the error message
+                    return response.json().then(errorData => {
+                        throw new Error(errorData.message || 'An error occurred');
+                    });
+                } else {
+                    // Handle a successful response (no need to parse JSON for success without data)
+                    console.log('Board state updated in Prolog: Success');
+                }
+            })
+            .catch(error => {
+                console.error('Error updating board state in Prolog:', error.message);
+            });
+    }
+
+    function clearMoveOptions() {
+        document.querySelectorAll('.available-move').forEach(cell => {
+            cell.classList.remove('available-move');
+            cell.classList.add('black-cell');
+        });
+    }
+
+    function getCurrentBoardState() {
+        const cells = document.querySelectorAll('.cell');
+        let boardState = {};
+
+        cells.forEach(cell => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            const checker = cell.querySelector('.checker');
+            const state = checker ? (checker.classList.contains('white') ? 'white' : 'black') : 'empty';
+            const type = checker ? (checker.classList.contains('normal') ? 'normal' : 'king') : 'empty';
+            if (state !== "empty") {
+                boardState[cell.dataset.row + '-' + cell.dataset.col] = {row: row, col: col, state: state, type: type};
+            }
+        });
+
+        return boardState;
+    }
+
+
+    function displayMoveOptions(moveOptions) {
+        document.querySelectorAll('.available-move').forEach(cell => {
+            cell.classList.remove('available-move');
+            cell.classList.add('black-cell');
+        });
+        moveOptions.forEach(move => {
+            const cell = document.querySelector(`.cell[data-row="${move.endRow}"][data-col="${move.endCol}"]`);
+            cell.classList.remove('black-cell');
+            cell.classList.add('available-move');
+
+            // Якщо існує шашка для биття
+            if (move.captureRow !== null && move.captureCol !== null) {
+                const captureCell = document.querySelector(`.cell[data-row="${move.captureRow}"][data-col="${move.captureCol}"]`);
+                captureCell.classList.add('to-capture');
+            }
+        });
+    }
+</script>
+
 </body>
 </html>
